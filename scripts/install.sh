@@ -43,7 +43,7 @@ if [[ "${FISH_SKIP_PYAUDIO:-1}" == "1" ]]; then
     'pydantic==2.9.2' cachetools descript-audio-codec safetensors tokenizers==0.23.2 \
     'soundfile>=0.12.1'
 else
-  uv pip install --python "$VENV_DIR/bin/python" --extra-index-url https://download.pytorch.org/whl/cpu -e "$FISH_SPEECH_ROOT[$FISH_EXTRA]"
+  uv pip install --python "$VENV_DIR/bin/python" --extra-index-url https://download.pytorch.org/whl/cpu -e "${FISH_SPEECH_ROOT}[$FISH_EXTRA]"
 fi
 
 cat <<MSG

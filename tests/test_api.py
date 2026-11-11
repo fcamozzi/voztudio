@@ -60,3 +60,30 @@ def test_generate_rejects_unknown_language_and_returns_audio(tmp_path):
     downloaded = api.get(f"/outputs/{output_id}")
     assert downloaded.status_code == 200
     assert downloaded.headers["content-type"].startswith("audio/wav")
+
+
+def test_health_reports_engine_failure_and_generation_hides_local_path(tmp_path):
+    class OfflineEngine(FakeEngine):
+        def health(self):
+            return False, "Fish Speech server unavailable"
+
+    api = TestClient(create_app(data_dir=tmp_path, engine=OfflineEngine()))
+    health = api.get("/health")
+    assert health.json() == {
+        "status": "degraded",
+        "engine_ready": False,
+        "detail": "Fish Speech server unavailable",
+        "device": "auto",
+        "model_id": "fishaudio/s2-pro",
+    }
+    voice = api.post(
+        "/voices",
+        files={"audio": ("reference.wav", wav_bytes(), "audio/wav")},
+        data={"transcript": "hello"},
+    ).json()
+    result = api.post(
+        "/generate",
+        json={"text": "hello", "language": "en", "voice_id": voice["id"]},
+    ).json()
+    assert "audio_path" not in result
+    assert result["download_url"].startswith("/outputs/")

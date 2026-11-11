@@ -31,7 +31,8 @@ trap cleanup EXIT INT TERM
 
 for _ in $(seq 1 120); do
   if curl -fsS "$FISH_SPEECH_URL/v1/health" >/dev/null 2>&1; then
-    exec "$VENV_DIR/bin/python" -m voztudio.app
+    "$VENV_DIR/bin/python" -m voztudio.app
+    exit $?
   fi
   if ! kill -0 "$FISH_PID" 2>/dev/null; then
     echo "Fish Speech server exited before readiness" >&2

@@ -98,7 +98,14 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return result.to_dict()
+        return {
+            "id": result.id,
+            "sample_rate": result.sample_rate,
+            "duration_s": result.duration_s,
+            "language": result.language,
+            "voice_id": result.voice_id,
+            "download_url": f"/outputs/{result.id}",
+        }
 
     @app.get("/outputs/{output_id}")
     def output(output_id: str):

@@ -85,6 +85,17 @@ class FishSpeechEngine:
             raise RuntimeError(f"Fish Speech request failed: {exc}") from exc
         return self._decode_wav(response.content)
 
+    def health(self) -> tuple[bool, str]:
+        try:
+            import httpx
+
+            response = httpx.get(f"{self.base_url}/v1/health", timeout=5)
+            if response.is_success and response.json().get("status") == "ok":
+                return True, "Fish Speech server ready"
+            return False, f"Fish Speech server returned HTTP {response.status_code}"
+        except Exception as exc:
+            return False, f"Fish Speech server unavailable: {exc}"
+
     @staticmethod
     def _decode_wav(content: bytes) -> AudioBuffer:
         try:
