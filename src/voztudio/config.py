@@ -13,6 +13,7 @@ class Settings:
     cache_dir: Path
     fish_speech_root: Path
     model_id: str
+    fish_speech_url: str
     device: str
     host: str
     port: int
@@ -29,6 +30,7 @@ def get_settings() -> Settings:
         cache_dir=_path("VOZTUDIO_CACHE_DIR", ".cache"),
         fish_speech_root=_path("FISH_SPEECH_ROOT", ".cache/fish-speech"),
         model_id=os.getenv("FISH_MODEL_ID", "fishaudio/s2-pro"),
+        fish_speech_url=os.getenv("FISH_SPEECH_URL", "http://127.0.0.1:8080"),
         device=os.getenv("VOZTUDIO_DEVICE", "auto"),
         host=os.getenv("VOZTUDIO_HOST", "127.0.0.1"),
         port=int(os.getenv("VOZTUDIO_PORT", "7860")),
