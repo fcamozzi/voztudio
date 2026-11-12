@@ -2,12 +2,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+# shellcheck source=scripts/lib.sh
+source "$ROOT/scripts/lib.sh"
+
 VENV_DIR="${VENV_DIR:-$ROOT/.venv}"
 FISH_SPEECH_ROOT="${FISH_SPEECH_ROOT:-$ROOT/.cache/fish-speech}"
 FISH_SPEECH_REF="${FISH_SPEECH_REF:-0f8a12e8a651062fdee9c33a894bdccd3a8513f1}"
 
-command -v "$PYTHON_BIN" >/dev/null || { echo "Python is required" >&2; exit 1; }
+PYTHON_BIN="$(resolve_python)"
+"$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 13) else 1)' \
+  || { echo "Python 3.11 or 3.12 is required (found $PYTHON_BIN)" >&2; exit 1; }
 command -v ffmpeg >/dev/null || { echo "FFmpeg is required" >&2; exit 1; }
 command -v git >/dev/null || { echo "Git is required" >&2; exit 1; }
 command -v uv >/dev/null || { echo "uv is required (install from https://docs.astral.sh/uv/)" >&2; exit 1; }
@@ -25,31 +29,25 @@ fi
 git -C "$FISH_SPEECH_ROOT" fetch --depth 1 origin "$FISH_SPEECH_REF"
 git -C "$FISH_SPEECH_ROOT" checkout --detach "$FISH_SPEECH_REF"
 
-# S2-Pro is the local default because it supports CPU fallback; override with FISH_EXTRA.
-FISH_EXTRA="${FISH_EXTRA:-cpu}"
-if [[ "${FISH_SKIP_PYAUDIO:-1}" == "1" ]]; then
-  # pyaudio is only used by the upstream playback helper, not by its API server.
-  # The managed image has no C compiler/PortAudio headers, so install the server
-  # runtime without that optional playback package.
-  uv pip install --python "$VENV_DIR/bin/python" \
-    --extra-index-url https://download.pytorch.org/whl/cpu \
-    torch==2.8.0 torchaudio==2.8.0
-  uv pip install --python "$VENV_DIR/bin/python" -e "$FISH_SPEECH_ROOT" --no-deps
-  uv pip install --python "$VENV_DIR/bin/python" \
-    numpy transformers==5.19.0 'hydra-core>=1.3.2' 'natsort>=8.4.0' 'einops>=0.7.0' \
-    'librosa>=0.10.1' 'kui>=1.6.0' 'uvicorn>=0.30.0' 'loguru>=0.6.0' 'pyrootutils>=1.0.4' \
-    'resampy>=0.4.3' 'einx[torch]==0.2.2' pydub modelscope==1.17.1 \
-    opencc-python-reimplemented==0.1.7 silero-vad ormsgpack 'tiktoken>=0.8.0' \
-    'pydantic==2.9.2' cachetools descript-audio-codec safetensors tokenizers==0.23.2 \
-    'soundfile>=0.12.1'
-else
-  uv pip install --python "$VENV_DIR/bin/python" --extra-index-url https://download.pytorch.org/whl/cpu -e "${FISH_SPEECH_ROOT}[$FISH_EXTRA]"
-fi
+FISH_EXTRA="$(resolve_fish_extra)"
+# uv sync reads tool.uv.override-dependencies (protobuf) and the torch index
+# for the selected extra. --inexact keeps the voztudio packages already
+# installed. pyaudio is only imported by the upstream playback client.
+export VIRTUAL_ENV="$VENV_DIR"
+uv sync \
+  --directory "$FISH_SPEECH_ROOT" \
+  --python "$VENV_DIR/bin/python" \
+  --active \
+  --inexact \
+  --no-dev \
+  --extra "$FISH_EXTRA" \
+  --no-install-package pyaudio
 
 cat <<MSG
 Voztudio dependencies installed.
 Fish Speech source: $FISH_SPEECH_ROOT
 Fish Speech revision: $(git -C "$FISH_SPEECH_ROOT" rev-parse HEAD)
+PyTorch extra: $FISH_EXTRA
 Next: download S2-Pro weights with:
   $VENV_DIR/bin/hf download fishaudio/s2-pro --local-dir "$ROOT/.cache/checkpoints/s2-pro"
 MSG

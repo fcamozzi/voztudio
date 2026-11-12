@@ -1,19 +1,13 @@
 import wave
 from pathlib import Path
 
+import pytest
+
+from tests.support import write_reference
 from voztudio.domain import GenerationRequest
 from voztudio.engine import AudioBuffer
-from voztudio.generation import GenerationService
+from voztudio.generation import GenerationService, crossfade_audio
 from voztudio.storage import VoiceStore
-
-
-def write_wav(path: Path) -> Path:
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(16000)
-        handle.writeframes(b"\x00\x00" * 1600)
-    return path
 
 
 class FakeEngine:
@@ -25,11 +19,19 @@ class FakeEngine:
         return AudioBuffer(samples=(0.1, 0.2), sample_rate=16000)
 
 
-def test_generation_chunks_in_order_and_writes_metadata(tmp_path):
+def _service(tmp_path: Path, max_chars: int = 200):
     voices = VoiceStore(tmp_path / "voices")
-    reference = voices.register(write_wav(tmp_path / "reference.wav"))
+    reference = voices.register(
+        write_reference(tmp_path / "reference.wav"),
+        transcript="hello there",
+        consent=True,
+    )
     engine = FakeEngine()
-    service = GenerationService(engine, voices, tmp_path / "outputs", max_chars=12)
+    return GenerationService(engine, voices, tmp_path / "outputs", max_chars=max_chars), engine, reference
+
+
+def test_generation_chunks_in_order_and_writes_metadata(tmp_path):
+    service, engine, reference = _service(tmp_path, max_chars=12)
 
     result = service.generate(
         GenerationRequest(
@@ -54,10 +56,7 @@ def test_generation_chunks_in_order_and_writes_metadata(tmp_path):
 
 
 def test_generation_rejects_unknown_language_before_engine_call(tmp_path):
-    voices = VoiceStore(tmp_path / "voices")
-    reference = voices.register(write_wav(tmp_path / "reference.wav"))
-    engine = FakeEngine()
-    service = GenerationService(engine, voices, tmp_path / "outputs")
+    service, engine, reference = _service(tmp_path)
 
     try:
         service.generate(GenerationRequest("hello", "de", reference.id))
@@ -66,3 +65,15 @@ def test_generation_rejects_unknown_language_before_engine_call(tmp_path):
     else:
         raise AssertionError("unsupported language was accepted")
     assert engine.calls == []
+
+
+def test_default_max_chars_matches_one_s2_pass():
+    assert GenerationService.__init__.__defaults__[0] == 200
+
+
+def test_crossfade_mixes_overlap_and_leaves_tiny_buffers_alone():
+    mixed = crossfade_audio([(1, 1, 1, 1), (0.5, 0.5, 0.5, 0.5)], sample_rate=100)
+    assert mixed == pytest.approx((1, 1, 1.0, 0.5, 0.5, 0.5))
+    assert len(mixed) == 6
+    tiny = crossfade_audio([(0.1, 0.2), (0.1, 0.2)], sample_rate=16000)
+    assert tiny == (0.1, 0.2, 0.1, 0.2)

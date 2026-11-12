@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -14,7 +14,21 @@ from voztudio.domain import GenerationRequest
 from voztudio.engine import FishSpeechEngine, SpeechEngine
 from voztudio.generation import GenerationService
 from voztudio.storage import VoiceStore
-from voztudio.text import validate_language
+
+_UPLOAD_SUFFIXES = {
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".opus",
+    ".webm",
+    ".mp4",
+    ".aiff",
+    ".aif",
+}
+_CONSENT_VALUES = {"true", "1", "yes", "on"}
 
 
 class GeneratePayload(BaseModel):
@@ -26,11 +40,17 @@ class GeneratePayload(BaseModel):
     output_format: str = "wav"
 
 
+def consent_granted(value: str | None) -> bool:
+    return (value or "").strip().lower() in _CONSENT_VALUES
+
+
 def _voice_json(record) -> dict[str, Any]:
     return {
         "id": record.id,
         "transcript": record.transcript,
         "sample_rate": record.sample_rate,
+        "duration_s": record.duration_s,
+        "consent": record.consent,
         "created_at": record.created_at.isoformat(),
     }
 
@@ -43,7 +63,11 @@ def create_app(
     settings = settings or get_settings()
     if data_dir is not None:
         settings = replace(settings, data_dir=Path(data_dir).expanduser().resolve())
-    voices = VoiceStore(settings.data_dir / "voices")
+    voices = VoiceStore(
+        settings.data_dir / "voices",
+        min_seconds=settings.voice_min_seconds,
+        max_seconds=settings.voice_max_seconds,
+    )
     output_root = settings.data_dir / "outputs"
     service = GenerationService(
         engine or FishSpeechEngine.from_settings(settings), voices, output_root
@@ -65,6 +89,7 @@ def create_app(
             "engine_ready": ready,
             "detail": detail,
             "device": settings.device,
+            "resolved_device": settings.resolved_device,
             "model_id": settings.model_id,
         }
 
@@ -74,18 +99,39 @@ def create_app(
 
     @app.post("/voices", status_code=201)
     async def register_voice(
-        audio: UploadFile = File(...), transcript: str | None = Form(default=None)
+        audio: UploadFile = File(...),
+        transcript: str | None = Form(default=None),
+        consent: str | None = Form(default=None),
     ):
-        suffix = Path(audio.filename or "reference.wav").suffix.lower() or ".wav"
-        temporary_path = settings.data_dir / f".upload-{next(tempfile._get_candidate_names())}{suffix}"
+        if not consent_granted(consent):
+            raise HTTPException(
+                status_code=422,
+                detail="Confirm that you have the rights to use this reference voice",
+            )
+        suffix = Path(audio.filename or "reference.wav").suffix.lower()
+        if suffix not in _UPLOAD_SUFFIXES:
+            suffix = ".wav"
+        temporary = tempfile.NamedTemporaryFile(
+            prefix="voztudio-upload-", suffix=suffix, dir=settings.data_dir, delete=False
+        )
+        temporary_path = Path(temporary.name)
+        temporary.close()
         try:
-            temporary_path.write_bytes(await audio.read())
-            record = voices.register(temporary_path, transcript)
+            await _copy_upload(audio, temporary_path, settings.max_upload_bytes)
+            record = voices.register(temporary_path, transcript, consent=True)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         finally:
             temporary_path.unlink(missing_ok=True)
         return _voice_json(record)
+
+    @app.delete("/voices/{voice_id}", status_code=204)
+    def delete_voice(voice_id: str):
+        try:
+            voices.delete(voice_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Voice not found") from exc
+        return Response(status_code=204)
 
     @app.post("/generate")
     def generate(payload: GeneratePayload):
@@ -109,11 +155,39 @@ def create_app(
 
     @app.get("/outputs/{output_id}")
     def output(output_id: str):
-        if not output_id.isalnum():
-            raise HTTPException(status_code=404, detail="Output not found")
-        path = output_root / f"{output_id}.wav"
-        if not path.is_file():
+        path = _output_path(output_root, output_id)
+        if path is None or not path.is_file():
             raise HTTPException(status_code=404, detail="Output not found")
         return FileResponse(path, media_type="audio/wav", filename=path.name)
 
+    @app.delete("/outputs/{output_id}", status_code=204)
+    def delete_output(output_id: str):
+        path = _output_path(output_root, output_id)
+        if path is None or not path.is_file():
+            if path is not None:
+                path.with_suffix(".json").unlink(missing_ok=True)
+            raise HTTPException(status_code=404, detail="Output not found")
+        path.unlink(missing_ok=True)
+        path.with_suffix(".json").unlink(missing_ok=True)
+        return Response(status_code=204)
+
     return app
+
+
+def _output_path(output_root: Path, output_id: str) -> Path | None:
+    if not output_id.isalnum():
+        return None
+    return output_root / f"{output_id}.wav"
+
+
+async def _copy_upload(upload: UploadFile, destination: Path, limit: int) -> None:
+    written = 0
+    with destination.open("wb") as handle:
+        while True:
+            chunk = await upload.read(1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > limit:
+                raise HTTPException(status_code=413, detail="Upload exceeds the size limit")
+            handle.write(chunk)
