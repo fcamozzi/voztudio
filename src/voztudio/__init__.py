@@ -1,3 +1,3 @@
-"""Local Fish Speech voice generation wrapper."""
+"""Local voice cloning wrapper."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

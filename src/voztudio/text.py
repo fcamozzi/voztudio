@@ -17,9 +17,9 @@ def validate_language(language: str) -> str:
 def chunk_text(text: str, max_chars: int = 200) -> list[str]:
     """Pack sentences up to max_chars.
 
-    S2-Pro does not slice an untagged script on chunk_length. One request is
-    one generation pass capped at 1024 frames, so the client keeps chunks near
-    200 characters and lets each request finish.
+    Every backend keeps chunks near 200 characters. S2-Pro does not slice an
+    untagged script on chunk_length, and a long prompt is also a poor fit for
+    the in-process models on a 16 GB machine.
     """
     if max_chars < 1:
         raise ValueError("max_chars must be positive")

@@ -9,9 +9,12 @@ from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
+from voztudio.asr import CachingTranscriber, LazyTranscriber
 from voztudio.config import Settings, get_settings
+from voztudio.pronounce import load_pronunciation_file
 from voztudio.domain import GenerationRequest
-from voztudio.engine import FishSpeechEngine, SpeechEngine
+from voztudio.engine import SpeechEngine
+from voztudio.factory import build_engine
 from voztudio.generation import GenerationService
 from voztudio.storage import VoiceStore
 
@@ -38,6 +41,7 @@ class GeneratePayload(BaseModel):
     voice_id: str
     instructions: str | None = None
     output_format: str = "wav"
+    pronunciations: str | None = None
 
 
 def consent_granted(value: str | None) -> bool:
@@ -69,10 +73,15 @@ def create_app(
         max_seconds=settings.voice_max_seconds,
     )
     output_root = settings.data_dir / "outputs"
+    active = engine or build_engine(settings)
     service = GenerationService(
-        engine or FishSpeechEngine.from_settings(settings), voices, output_root
+        active,
+        voices,
+        output_root,
+        transcriber=CachingTranscriber(LazyTranscriber(settings.runtime, settings.asr_model), settings.cache_dir),
+        pronunciations=load_pronunciation_file(settings.pronunciations_path),
     )
-    app = FastAPI(title="Voztudio", version="0.1.0")
+    app = FastAPI(title="Voztudio", version="0.2.0")
     app.state.service = service
     app.state.engine = engine or service.engine
     app.state.settings = settings
@@ -84,13 +93,20 @@ def create_app(
         check = getattr(app.state.engine, "health", None)
         if check is not None:
             ready, detail = check()
+        resolved = getattr(app.state.engine, "resolved_device", None) or settings.resolved_device
+        model_id = getattr(app.state.engine, "model_id", None) or settings.model_id
+        backend = getattr(app.state.engine, "name", None) or settings.backend
+        runtime = getattr(app.state.engine, "runtime", None) or settings.runtime
         return {
             "status": "ok" if ready else "degraded",
             "engine_ready": ready,
             "detail": detail,
             "device": settings.device,
-            "resolved_device": settings.resolved_device,
-            "model_id": settings.model_id,
+            "resolved_device": resolved,
+            "model_id": model_id,
+            "backend": backend,
+            "runtime": runtime,
+            "style_supported": bool(getattr(app.state.engine, "supports_style", True)),
         }
 
     @app.get("/voices")
@@ -151,6 +167,8 @@ def create_app(
             "language": result.language,
             "voice_id": result.voice_id,
             "download_url": f"/outputs/{result.id}",
+            "warnings": list(result.warnings),
+            "reference_transcript": result.reference_transcript,
         }
 
     @app.get("/outputs/{output_id}")

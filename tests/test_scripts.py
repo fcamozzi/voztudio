@@ -27,6 +27,9 @@ def test_start_script_keeps_cleanup_trap_active():
     assert "--api-key" in text
     assert "load_env_file" in text
     assert "set -a" not in text
+    assert 'VOZTUDIO_BACKEND:-qwen3' in text
+    assert '[[ "$VOZTUDIO_BACKEND" == "fish" ]]' in text
+    assert '"${API_ARGS[@]+"${API_ARGS[@]}"}"' in text
 
 
 def test_install_script_uses_uv_sync_and_python_resolver():
@@ -37,6 +40,31 @@ def test_install_script_uses_uv_sync_and_python_resolver():
     assert "--extra" in text
     assert "transformers==5.19.0" not in text
     assert '"${FISH_SPEECH_ROOT}[$FISH_EXTRA]"' not in text
+    assert "VOZTUDIO_BACKEND:-qwen3" in text
+    assert ".venv-fish" in text
+    assert "mlx-audio>=0.6" in text
+    assert "qwen-tts>=0.1.1" in text
+    assert "numpy>=2.0.2,<3" in text
+    before_fish, fish_fn = text.split("install_fish()", 1)
+    assert "uv sync" not in before_fish
+    assert "git clone" in fish_fn
+    assert ".venv-fish" in fish_fn
+
+
+def test_empty_array_expansion_survives_nounset():
+    script = r"""
+set -u
+API_ARGS=()
+set -- "${API_ARGS[@]+"${API_ARGS[@]}"}"
+test "$#" -eq 0
+API_ARGS=(--api-key secret)
+set -- "${API_ARGS[@]+"${API_ARGS[@]}"}"
+test "$#" -eq 2
+test "$1" = "--api-key"
+test "$2" = "secret"
+"""
+    result = _bash(script)
+    assert result.returncode == 0, result.stderr
 
 
 def test_resolve_python_prefers_python3_on_path(tmp_path):
