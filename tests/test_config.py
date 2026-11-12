@@ -1,10 +1,14 @@
 import pytest
 
 from voztudio.config import ensure_bind_allowed, get_settings
+from voztudio.models import default_runtime, repo_for
 
 
 def test_defaults_use_loopback_and_target_languages(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VOZTUDIO_BACKEND", raising=False)
+    monkeypatch.delenv("VOZTUDIO_RUNTIME", raising=False)
+    monkeypatch.delenv("VOZTUDIO_MODEL_ID", raising=False)
     settings = get_settings()
     assert settings.host == "127.0.0.1"
     assert settings.port == 7860
@@ -13,6 +17,9 @@ def test_defaults_use_loopback_and_target_languages(monkeypatch, tmp_path):
     assert settings.resolved_device == "auto"
     assert settings.voice_min_seconds == 10
     assert settings.voice_max_seconds == 90
+    assert settings.backend == "qwen3"
+    assert settings.runtime == default_runtime()
+    assert settings.model_id == repo_for("qwen3", settings.runtime)
 
 
 def test_environment_overrides_are_parsed(monkeypatch, tmp_path):
@@ -41,6 +48,23 @@ def test_dotenv_does_not_override_existing_variables(monkeypatch, tmp_path):
     assert settings.port == 7860
     assert settings.device == "cpu"
     assert settings.fish_api_key == "secret"
+
+
+def test_backend_selects_checkpoint_and_rejects_unknown_names(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VOZTUDIO_BACKEND", "qwen3-fast")
+    monkeypatch.setenv("VOZTUDIO_RUNTIME", "mlx")
+    assert get_settings().model_id == "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
+    monkeypatch.setenv("VOZTUDIO_BACKEND", "voxcpm2")
+    monkeypatch.setenv("VOZTUDIO_RUNTIME", "pytorch")
+    assert get_settings().model_id == "openbmb/VoxCPM2"
+    monkeypatch.setenv("VOZTUDIO_BACKEND", "fish")
+    monkeypatch.setenv("FISH_MODEL_ID", "fishaudio/s2-pro")
+    assert get_settings().model_id == "fishaudio/s2-pro"
+    assert get_settings().runtime == "fish-http"
+    monkeypatch.setenv("VOZTUDIO_BACKEND", "nope")
+    with pytest.raises(SystemExit, match="VOZTUDIO_BACKEND"):
+        get_settings()
 
 
 def test_bind_allows_loopback_and_warns_when_opted_in(capsys):

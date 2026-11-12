@@ -67,7 +67,11 @@ def test_generate_rejects_unknown_language_and_returns_audio(tmp_path):
     assert api.get(f"/outputs/{output_id}").status_code == 404
 
 
-def test_health_reports_engine_failure_and_generation_hides_local_path(tmp_path):
+def test_health_reports_engine_failure_and_generation_hides_local_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VOZTUDIO_BACKEND", "qwen3")
+    monkeypatch.setenv("VOZTUDIO_RUNTIME", "pytorch")
+
     class OfflineEngine(FakeEngine):
         def health(self):
             return False, "Fish Speech server unavailable"
@@ -80,7 +84,10 @@ def test_health_reports_engine_failure_and_generation_hides_local_path(tmp_path)
         "detail": "Fish Speech server unavailable",
         "device": "auto",
         "resolved_device": "auto",
-        "model_id": "fishaudio/s2-pro",
+        "model_id": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        "backend": "qwen3",
+        "runtime": "pytorch",
+        "style_supported": True,
     }
     voice = _register(api, tmp_path).json()
     result = api.post(

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from voztudio.models import BACKENDS, default_runtime, repo_for
+
 TARGET_LANGUAGES = ("en", "pt", "es", "hi", "zh", "fr")
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _DEFAULT_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -30,6 +32,9 @@ class Settings:
     allow_public_bind: bool = False
     resolved_device: str = "auto"
     fish_api_key: str | None = None
+    backend: str = "qwen3"
+    runtime: str = "pytorch"
+    runtime_explicit: bool = False
 
 
 def _path(name: str, default: str) -> Path:
@@ -49,11 +54,33 @@ def get_settings() -> Settings:
     # Explicit path: find_dotenv() walks parents and would pick up a developer
     # .env when tests change the working directory.
     load_dotenv(Path.cwd() / ".env", override=False)
+    backend = os.getenv("VOZTUDIO_BACKEND", "qwen3").strip().lower() or "qwen3"
+    if backend not in BACKENDS:
+        raise SystemExit(
+            f"Unknown VOZTUDIO_BACKEND={backend}. "
+            "Expected one of: qwen3, qwen3-fast, voxcpm2, fish."
+        )
+    runtime_env = os.getenv("VOZTUDIO_RUNTIME", "").strip().lower()
+    if backend == "fish":
+        runtime = "fish-http"
+        runtime_explicit = False
+    else:
+        runtime_explicit = bool(runtime_env)
+        runtime = runtime_env or default_runtime()
+        if runtime not in {"mlx", "pytorch"}:
+            raise SystemExit(
+                f"Unknown VOZTUDIO_RUNTIME={runtime}. Expected mlx or pytorch."
+            )
+    override = os.getenv("VOZTUDIO_MODEL_ID", "").strip()
+    if backend == "fish":
+        model_id = override or os.getenv("FISH_MODEL_ID", repo_for("fish", "fish-http"))
+    else:
+        model_id = override or repo_for(backend, runtime)
     return Settings(
         data_dir=_path("VOZTUDIO_DATA_DIR", "data"),
         cache_dir=_path("VOZTUDIO_CACHE_DIR", ".cache"),
         fish_speech_root=_path("FISH_SPEECH_ROOT", ".cache/fish-speech"),
-        model_id=os.getenv("FISH_MODEL_ID", "fishaudio/s2-pro"),
+        model_id=model_id,
         fish_speech_url=os.getenv("FISH_SPEECH_URL", "http://127.0.0.1:8080"),
         device=os.getenv("VOZTUDIO_DEVICE", "auto"),
         host=os.getenv("VOZTUDIO_HOST", "127.0.0.1"),
@@ -65,6 +92,9 @@ def get_settings() -> Settings:
         allow_public_bind=_flag("VOZTUDIO_ALLOW_PUBLIC_BIND"),
         resolved_device=os.getenv("VOZTUDIO_RESOLVED_DEVICE", "auto").strip() or "auto",
         fish_api_key=_optional("FISH_SPEECH_API_KEY"),
+        backend=backend,
+        runtime=runtime,
+        runtime_explicit=runtime_explicit,
     )
 
 

@@ -20,7 +20,8 @@ def _service(tmp_path):
 
 
 def test_notice_states_license_and_portuguese_limit():
-    assert "Built with Fish Audio" in UI_NOTICE
+    assert "Apache-2.0" in UI_NOTICE
+    assert "fishaudio/s2-pro" in UI_NOTICE
     assert "pt" in UI_NOTICE
     assert "português do Brasil" in UI_NOTICE
 

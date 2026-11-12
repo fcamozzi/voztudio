@@ -23,6 +23,7 @@ class GeneratedAudio:
     duration_s: float
     language: str
     voice_id: str
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +33,7 @@ class GeneratedAudio:
             "duration_s": self.duration_s,
             "language": self.language,
             "voice_id": self.voice_id,
+            "warnings": list(self.warnings),
         }
 
 
@@ -58,18 +60,22 @@ class GenerationService:
         reference = self.store.get(request.voice_id)
         if not reference.transcript:
             raise ValueError(
-                "Fish Speech requires a transcript for the reference audio; "
+                "A transcript of the reference audio is required; "
                 "register the voice with its exact transcript"
             )
-        buffers = [
-            self.engine.generate(chunk, language, reference, request.instructions)
-            for chunk in chunk_text(request.text, self.max_chars)
-        ]
+        warnings: list[str] = []
+        buffers: list[AudioBuffer] = []
+        for chunk in chunk_text(request.text, self.max_chars):
+            buffer, chunk_warnings = self._speak(chunk, language, reference, request.instructions)
+            buffers.append(buffer)
+            for warning in chunk_warnings:
+                if warning not in warnings:
+                    warnings.append(warning)
         if not buffers:
             raise ValueError("Text must not be empty")
         sample_rate = buffers[0].sample_rate
         if any(buffer.sample_rate != sample_rate for buffer in buffers):
-            raise RuntimeError("Fish Speech returned inconsistent sample rates")
+            raise RuntimeError("The speech backend returned inconsistent sample rates")
         samples = crossfade_audio([buffer.samples for buffer in buffers], sample_rate, self.fade_s)
         audio_id = uuid.uuid4().hex
         audio_path = self.output_root / f"{audio_id}.wav"
@@ -81,6 +87,7 @@ class GenerationService:
             duration_s=len(samples) / sample_rate,
             language=language,
             voice_id=reference.id,
+            warnings=tuple(warnings),
         )
         metadata_path = audio_path.with_suffix(".json")
         metadata_path.write_text(
@@ -94,6 +101,22 @@ class GenerationService:
             encoding="utf-8",
         )
         return result
+
+    def _speak(self, chunk: str, language: str, reference, instructions: str | None):
+        synthesize = getattr(self.engine, "synthesize", None)
+        if callable(synthesize):
+            result = synthesize(
+                text=chunk,
+                reference_audio=reference.audio_path,
+                reference_transcript=reference.transcript,
+                style=instructions,
+                language=language,
+            )
+            return result.audio, result.warnings
+        return (
+            self.engine.generate(chunk, language, reference, instructions),
+            tuple(getattr(self.engine, "last_warnings", ())),
+        )
 
     @staticmethod
     def _write_wav(path: Path, samples: Sequence[float], sample_rate: int) -> None:

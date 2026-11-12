@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict
 
 from voztudio.config import Settings, get_settings
 from voztudio.domain import GenerationRequest
-from voztudio.engine import FishSpeechEngine, SpeechEngine
+from voztudio.engine import SpeechEngine
+from voztudio.factory import build_engine
 from voztudio.generation import GenerationService
 from voztudio.storage import VoiceStore
 
@@ -69,10 +70,8 @@ def create_app(
         max_seconds=settings.voice_max_seconds,
     )
     output_root = settings.data_dir / "outputs"
-    service = GenerationService(
-        engine or FishSpeechEngine.from_settings(settings), voices, output_root
-    )
-    app = FastAPI(title="Voztudio", version="0.1.0")
+    service = GenerationService(engine or build_engine(settings), voices, output_root)
+    app = FastAPI(title="Voztudio", version="0.2.0")
     app.state.service = service
     app.state.engine = engine or service.engine
     app.state.settings = settings
@@ -84,13 +83,20 @@ def create_app(
         check = getattr(app.state.engine, "health", None)
         if check is not None:
             ready, detail = check()
+        resolved = getattr(app.state.engine, "resolved_device", None) or settings.resolved_device
+        model_id = getattr(app.state.engine, "model_id", None) or settings.model_id
+        backend = getattr(app.state.engine, "name", None) or settings.backend
+        runtime = getattr(app.state.engine, "runtime", None) or settings.runtime
         return {
             "status": "ok" if ready else "degraded",
             "engine_ready": ready,
             "detail": detail,
             "device": settings.device,
-            "resolved_device": settings.resolved_device,
-            "model_id": settings.model_id,
+            "resolved_device": resolved,
+            "model_id": model_id,
+            "backend": backend,
+            "runtime": runtime,
+            "style_supported": bool(getattr(app.state.engine, "supports_style", True)),
         }
 
     @app.get("/voices")
@@ -151,6 +157,7 @@ def create_app(
             "language": result.language,
             "voice_id": result.voice_id,
             "download_url": f"/outputs/{result.id}",
+            "warnings": list(result.warnings),
         }
 
     @app.get("/outputs/{output_id}")
