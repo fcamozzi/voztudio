@@ -91,6 +91,7 @@ install_runtime() {
         uv pip install --python "$VENV_DIR/bin/python" \
           "qwen-tts>=0.1.1" "huggingface_hub>=0.34,<1"
       fi
+      uv pip install --python "$VENV_DIR/bin/python" "faster-whisper>=1.1"
       ;;
     *)
       echo "Unknown VOZTUDIO_RUNTIME=$runtime. Expected mlx or pytorch." >&2
@@ -165,6 +166,9 @@ CHECKPOINT_NAME="$(printf '%s\n' "$CHECKPOINT_INFO" | sed -n '3p')"
 CACHE_DIR="${VOZTUDIO_CACHE_DIR:-$ROOT/.cache}"
 CHECKPOINT_DIR="$CACHE_DIR/checkpoints/$CHECKPOINT_NAME"
 download_checkpoint "$MODEL_REPO" "$CHECKPOINT_DIR"
+if [[ "$RUNTIME_NAME" == "mlx" ]]; then
+  hf_download "mlx-community/whisper-tiny-asr-fp16"
+fi
 
 cat <<MSG
 Voztudio dependencies installed.

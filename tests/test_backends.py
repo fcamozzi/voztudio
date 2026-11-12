@@ -9,6 +9,7 @@ from voztudio.config import get_settings
 from voztudio.domain import VoiceRecord
 from voztudio.engine import FishSpeechEngine
 from voztudio.factory import build_engine
+from voztudio.duration import qwen_max_tokens, vox_max_tokens
 from voztudio.qwen import Qwen3Backend
 from voztudio.reference import prepare_reference
 from voztudio.stylemap import HINDI_WARNING, QWEN_STYLE_WARNING, strip_qwen_style, vox_instruction
@@ -73,13 +74,12 @@ def test_qwen_mlx_clone_omits_voice_and_style(tmp_path):
     assert result.audio.sample_rate == 24000
     assert result.audio.samples == (0.1, -0.2)
     assert QWEN_STYLE_WARNING in result.warnings
-    assert model.kwargs == {
-        "text": "Olá.",
-        "ref_audio": str(audio),
-        "ref_text": "exact words",
-        "lang_code": "portuguese",
-        "stream": False,
-    }
+    assert model.kwargs["text"] == "Olá."
+    assert model.kwargs["ref_text"] == "exact words"
+    assert model.kwargs["lang_code"] == "portuguese"
+    assert model.kwargs["stream"] is False
+    assert model.kwargs["max_tokens"] == qwen_max_tokens("Olá.")
+    assert model.kwargs["max_tokens"] < 200
 
 
 def test_qwen_pytorch_reuses_the_clone_prompt_and_warns_for_hindi(tmp_path):
@@ -114,7 +114,9 @@ def test_qwen_pytorch_reuses_the_clone_prompt_and_warns_for_hindi(tmp_path):
     assert len(model.prompts) == 1
     assert model.calls[0]["language"] == "auto"
     assert model.calls[0]["voice_clone_prompt"] == {"ref": "exact words"}
+    assert model.calls[0]["max_new_tokens"] == qwen_max_tokens("Hello.")
     assert model.calls[1]["language"] == "english"
+    assert model.calls[1]["max_new_tokens"] == qwen_max_tokens("Again.")
     assert "ref_audio" not in model.calls[0]
 
 
@@ -137,6 +139,10 @@ def test_voxcpm_mlx_and_pytorch_style_calls(tmp_path):
     assert mlx_model.kwargs["text"] == "Olá."
     assert mlx_model.kwargs["instruct"] == "sussurrando"
     assert mlx_model.kwargs["ref_audio"] == str(audio)
+    assert mlx_model.kwargs["ref_text"] == "exact words"
+    assert mlx_model.kwargs["min_tokens"] == 2
+    assert mlx_model.kwargs["max_tokens"] == vox_max_tokens("(sussurrando)Olá.")
+    assert mlx_model.kwargs["max_tokens"] < 80
 
     class Inner:
         sample_rate = 48000
@@ -161,6 +167,8 @@ def test_voxcpm_mlx_and_pytorch_style_calls(tmp_path):
     assert torch_model.kwargs["reference_wav_path"] == str(audio)
     assert torch_model.kwargs["cfg_value"] == 2.0
     assert torch_model.kwargs["inference_timesteps"] == 10
+    assert torch_model.kwargs["min_len"] == 2
+    assert torch_model.kwargs["max_len"] == vox_max_tokens("(sussurrando)Olá.")
 
 
 def test_fish_sends_only_the_first_30_seconds(tmp_path):

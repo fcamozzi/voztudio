@@ -143,9 +143,15 @@ curl -X POST http://127.0.0.1:7860/generate \
   -d '{"text":"Olá, aqui é um teste da voz local.","language":"pt","voice_id":"VOICE_ID","instructions":"calm"}'
 ```
 
-The JSON response includes `warnings`. Qwen3-TTS Base has no style channel,
-so a style note or a `[tag]` is removed from the script and the warning says
-so. An empty `warnings` list means nothing was dropped.
+The JSON response includes `warnings` and `reference_transcript`. That
+transcript is the text actually aligned with the audio sent to the model.
+Qwen3-TTS Base has no style channel, so a style note or a `[tag]` is removed
+from the script and the warning says so. An empty `warnings` list means
+nothing was dropped.
+
+The language dropdown defaults to `pt`. Qwen3-TTS receives that label
+(`portuguese`). VoxCPM2 has no language argument; the spoken language follows
+the script, and the label is only stored with the file.
 
 Delete a voice or a generated file:
 
@@ -172,10 +178,17 @@ file:
 | VoxCPM2 | first 20 s | The VoxCPM usage guide calls 5–30 seconds a practical reference range. |
 | Fish Speech | first 30 s | This project's existing recommended range is 10–30 seconds. |
 
-The stored transcript is not rewritten. If the file was longer than the cap,
-the warning says the transcript still describes the full upload. A transcript
-of the kept prefix clones more accurately, especially for Qwen3-TTS, which
-aligns the transcript with the reference audio.
+The transcript has to describe only that prefix. A short transcript is sent
+as an override. A transcript that is longer than the window, or an empty one,
+is not sent: the wrapper transcribes the trimmed clip and sends that text
+instead. On Apple Silicon the transcriber is mlx-audio's Whisper tiny
+(`mlx-community/whisper-tiny-asr-fp16`). Set `VOZTUDIO_ASR_MODEL` to
+`mlx-community/Qwen3-ASR-0.6B-8bit` to use Qwen3-ASR instead. On Linux and
+CUDA the transcriber is [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+with the `tiny` weights. The UI shows the transcript that was actually sent.
+
+Existing voices do not need to be registered again. The next generation
+transcribes the window that the selected backend keeps.
 
 ## Style
 
@@ -220,6 +233,32 @@ already wrote, such as `(sussurrando)`, is kept.
 This is controllable cloning (`reference_wav_path` / `ref_audio`), not
 VoxCPM2 continuation. Continuation disables the control instruction.
 
+Each chunk is also length-capped. VoxCPM2's MLX `generate` accepts
+`max_tokens` (audio patches) and stops when its stop head fires after
+`min_tokens` (left at the upstream default of 2) or when the patch cap is
+hit. The published default cap is 2000 patches, and OpenBMB lists a 6.25 Hz
+token rate, so the default can keep talking for minutes. Qwen3-TTS stops on
+the codec EOS token inside a `max_tokens` loop; mlx-audio's own batched path
+floors that loop at 75 tokens. This wrapper sets both caps from the chunk
+length, at roughly 11 characters per second plus a margin, and then cuts any
+audio that still runs past that duration.
+
+## Pronunciation
+
+Brand names and loanwords can be rewritten before synthesis. Create
+`pronunciations.json` in the working directory, or set
+`VOZTUDIO_PRONUNCIATIONS` to a file. A JSON object and `Key=spoken` lines
+both work. `pronunciations.example.json` shows the shape:
+
+```json
+{"FastHunting": "Fést Rânting"}
+```
+
+The same lines can be typed in the UI box or sent as `pronunciations` on
+`POST /generate`. Lines in the request replace the same keys from the file.
+Replacements apply outside `[style tags]`, and a longer key wins over a
+shorter one. Matching ignores case.
+
 ## Memory and speed
 
 These figures are copied from upstream docs. This repository does not add
@@ -234,6 +273,8 @@ its own Apple Silicon benchmark.
 
 Leave headroom for macOS. The 8-bit checkpoints are the ones selected so the
 weights themselves are smaller than the bf16 Fish server that was swapping.
+Whisper tiny is a separate small download used only to transcribe the
+reference window.
 
 ## License boundary
 

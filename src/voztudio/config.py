@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from voztudio.models import BACKENDS, default_runtime, repo_for
+from voztudio.models import BACKENDS, FASTER_WHISPER_MODEL, MLX_ASR_MODEL, default_runtime, repo_for
 
 TARGET_LANGUAGES = ("en", "pt", "es", "hi", "zh", "fr")
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -35,6 +35,8 @@ class Settings:
     backend: str = "qwen3"
     runtime: str = "pytorch"
     runtime_explicit: bool = False
+    asr_model: str | None = None
+    pronunciations_path: Path | None = None
 
 
 def _path(name: str, default: str) -> Path:
@@ -95,7 +97,20 @@ def get_settings() -> Settings:
         backend=backend,
         runtime=runtime,
         runtime_explicit=runtime_explicit,
+        asr_model=_optional("VOZTUDIO_ASR_MODEL")
+        or (MLX_ASR_MODEL if runtime == "mlx" else FASTER_WHISPER_MODEL),
+        pronunciations_path=_pronunciations_path(),
     )
+
+
+def _pronunciations_path() -> Path | None:
+    raw = os.getenv("VOZTUDIO_PRONUNCIATIONS", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    candidate = Path.cwd() / "pronunciations.json"
+    if candidate.is_file():
+        return candidate.resolve()
+    return None
 
 
 def normalize_host(host: str) -> str:

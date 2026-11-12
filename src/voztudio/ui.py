@@ -10,7 +10,7 @@ UI_NOTICE = """# Voztudio
 
 O idioma `pt` é um rótulo local. Nenhum backend separa português do Brasil de português europeu. O sotaque sai do áudio de referência e o idioma falado segue o texto.
 
-A referência aceita continua de 10 a 90 segundos. Na síntese, o áudio é cortado no início da janela do modelo: 15 s no Qwen3-TTS, 20 s no VoxCPM2 e 30 s no Fish Speech.
+A referência aceita continua de 10 a 90 segundos. Na síntese, o áudio é cortado no início da janela do modelo: 15 s no Qwen3-TTS, 20 s no VoxCPM2 e 30 s no Fish Speech. A transcrição tem de cobrir só esses primeiros segundos. Se o texto colado for mais longo, ou estiver vazio, o trecho cortado é transcrito automaticamente.
 
 Qwen3-TTS e VoxCPM2 usam Apache-2.0. Os pesos `fishaudio/s2-pro` são só para pesquisa e uso não comercial.
 """
@@ -43,9 +43,10 @@ def synthesize(
     language: str,
     text: str,
     instructions: str | None,
+    pronunciations: str | None = None,
 ):
     if not voice_id:
-        return None, "Choose a reference voice."
+        return None, "Choose a reference voice.", ""
     try:
         result = service.generate(
             GenerationRequest(
@@ -53,11 +54,12 @@ def synthesize(
                 language=language,
                 voice_id=voice_id,
                 instructions=instructions or None,
+                pronunciations=pronunciations or None,
             )
         )
     except (KeyError, RuntimeError, ValueError) as exc:
-        return None, str(exc)
-    return str(result.audio_path), "\n".join(result.warnings)
+        return None, str(exc), ""
+    return str(result.audio_path), "\n".join(result.warnings), result.reference_transcript or ""
 
 
 def remove_voice(service: GenerationService, voice_id: str | None):
@@ -143,7 +145,21 @@ def create_ui(service: GenerationService):
             info="Mostra o backend deste processo. Trocar aqui não recarrega o modelo.",
         )
         audio = gr.Audio(sources=["upload"], type="filepath", label="Reference recording")
-        transcript = gr.Textbox(label="Exact transcript of the reference")
+        window = getattr(service.engine, "reference_max_seconds", None)
+        window_label = (
+            f"Transcrição opcional só dos primeiros {float(window):g} segundos"
+            if window
+            else "Transcrição opcional da referência"
+        )
+        transcript = gr.Textbox(
+            label=window_label,
+            info=(
+                "Tem de descrever só o começo que o modelo recebe "
+                "(15 s no Qwen3, 20 s no VoxCPM2, 30 s no Fish). "
+                "Um texto vazio ou longo demais é substituído pela transcrição automática desse trecho."
+            ),
+            lines=3,
+        )
         consent = gr.Checkbox(
             value=False,
             label="I have the rights to clone this voice, or the speaker consented",
@@ -153,17 +169,26 @@ def create_ui(service: GenerationService):
         with gr.Row():
             voice = gr.Dropdown(choices=voice_choices(service), label="Reference voice")
             language = gr.Dropdown(
-                choices=["en", "pt", "es", "hi", "zh", "fr"],
-                value="en",
+                choices=["pt", "en", "es", "hi", "zh", "fr"],
+                value="pt",
                 label="Language label",
-                info="Rótulo gravado com o arquivo. pt não separa pt-BR de pt-PT. Qwen3-TTS não lista hindi.",
+                info="Padrão pt. O rótulo é gravado com o arquivo e enviado aos modelos que aceitam idioma. pt não separa pt-BR de pt-PT. Qwen3-TTS não lista hindi.",
             )
         refresh_button = gr.Button("Refresh voices")
         delete_button = gr.Button("Delete voice")
         text = gr.Textbox(lines=8, label="Script")
         instructions = gr.Textbox(label=style_label(service))
+        pronunciations = gr.Textbox(
+            lines=4,
+            label="Pronúncia (opcional)",
+            info="Uma linha por palavra: FastHunting=Fést Rânting. Também vale pronunciations.json.",
+        )
         generate_button = gr.Button("Generate")
         output = gr.Audio(label="Generated audio", type="filepath")
+        used_transcript = gr.Textbox(
+            label="Transcrição dos primeiros segundos usada na clonagem",
+            interactive=False,
+        )
         error = gr.Textbox(label="Generation", interactive=False)
         backend.change(
             lambda choice: backend_switch_message(choice, running),
@@ -178,8 +203,10 @@ def create_ui(service: GenerationService):
         refresh_button.click(refresh, outputs=voice)
         delete_button.click(lambda voice_id: remove_voice(service, voice_id), [voice], [status, voice])
         generate_button.click(
-            lambda voice_id, selected, script, style: synthesize(service, voice_id, selected, script, style),
-            [voice, language, text, instructions],
-            [output, error],
+            lambda voice_id, selected, script, style, spoken: synthesize(
+                service, voice_id, selected, script, style, spoken
+            ),
+            [voice, language, text, instructions, pronunciations],
+            [output, error, used_transcript],
         )
     return demo

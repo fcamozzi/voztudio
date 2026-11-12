@@ -35,10 +35,11 @@ def test_ui_registers_only_with_consent_and_reports_errors(tmp_path):
     message, _updated = register_reference(service, str(audio), "hello there", True)
     assert message.startswith("Registered voice")
     voice_id = service.store.list()[0].id
-    path, error = synthesize(service, voice_id, "pt", "Olá.", "calm")
-    assert error == ""
+    path, error, used = synthesize(service, voice_id, "pt", "Olá.", "calm")
     assert path
-    _path, error = synthesize(service, voice_id, "de", "Olá.", None)
+    assert used == "hello there"
+    assert "Unsupported language" not in error
+    _path, error, _used = synthesize(service, voice_id, "de", "Olá.", None)
     assert "Unsupported language" in error
     demo = create_ui(service)
     assert demo.title == "Voztudio"
@@ -47,3 +48,5 @@ def test_ui_registers_only_with_consent_and_reports_errors(tmp_path):
 def test_consent_checkbox_starts_unchecked():
     source = (ROOT / "src" / "voztudio" / "ui.py").read_text(encoding="utf-8")
     assert "value=False" in source
+    assert 'value="pt"' in source
+    assert "primeiros" in source

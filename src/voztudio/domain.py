@@ -46,3 +46,4 @@ class GenerationRequest:
     voice_id: str
     instructions: str | None = None
     output_format: str = "wav"
+    pronunciations: str | None = None

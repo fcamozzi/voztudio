@@ -22,6 +22,7 @@ from pathlib import Path
 
 from voztudio.config import Settings
 from voztudio.engine import AudioBuffer, Synthesis
+from voztudio.duration import qwen_max_tokens
 from voztudio.models import QWEN_LANGUAGES, REFERENCE_MAX_SECONDS, repo_for
 from voztudio.reference import clip_warning, prepare_reference
 from voztudio.runtime import (
@@ -176,29 +177,34 @@ class Qwen3Backend:
     @staticmethod
     def _mlx(model, text: str, path: Path, transcript: str, lang_code: str):
         # Base cloning: ref_audio + ref_text. voice and instruct are omitted.
+        # max_tokens bounds the codec loop. The model still stops on codec EOS.
         results = model.generate(
             text=text,
             ref_audio=str(path),
             ref_text=transcript,
             lang_code=lang_code,
             stream=False,
+            max_tokens=qwen_max_tokens(text),
         )
         return samples_from_mlx(results)
 
     def _pytorch(self, model, text: str, path: Path, transcript: str, lang_code: str):
         prompt = self._clone_prompt(model, path, transcript)
+        limit = qwen_max_tokens(text)
         if prompt is None:
             wavs, rate = model.generate_voice_clone(
                 text=text,
                 language=lang_code,
                 ref_audio=str(path),
                 ref_text=transcript,
+                max_new_tokens=limit,
             )
         else:
             wavs, rate = model.generate_voice_clone(
                 text=text,
                 language=lang_code,
                 voice_clone_prompt=prompt,
+                max_new_tokens=limit,
             )
         if not wavs:
             raise RuntimeError("Qwen3-TTS returned no audio")

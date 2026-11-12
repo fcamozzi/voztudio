@@ -29,6 +29,7 @@ from pathlib import Path
 
 from voztudio.config import Settings
 from voztudio.engine import AudioBuffer, Synthesis
+from voztudio.duration import vox_max_tokens
 from voztudio.models import REFERENCE_MAX_SECONDS, repo_for
 from voztudio.reference import clip_warning, prepare_reference
 from voztudio.runtime import as_floats, load_mlx, load_vox_torch, model_source, samples_from_mlx, torch_device
@@ -79,8 +80,9 @@ class VoxCPM2Backend:
         style: str | None,
         language: str,
     ) -> Synthesis:
-        del reference_transcript  # Controllable cloning conditions on the waveform.
-        del language  # VoxCPM2 has no language field. The label is stored by the wrapper.
+        # VoxCPM2 has no language argument. OpenBMB says the text is synthesized
+        # directly, and the wrapper still stores the language label.
+        del language
         spoken, instruct, warnings = vox_instruction(text, style)
         if not spoken:
             raise ValueError("Text must not be empty after removing style tags")
@@ -93,7 +95,7 @@ class VoxCPM2Backend:
         with self._lock:
             model = self._model if self._model is not None else self._load()
             if self.runtime == "mlx":
-                samples, rate = self._mlx(model, spoken, path, instruct)
+                samples, rate = self._mlx(model, spoken, path, instruct, reference_transcript)
             else:
                 samples, rate = self._pytorch(model, spoken, path, instruct)
         if self._fallback_warning:
@@ -162,10 +164,22 @@ class VoxCPM2Backend:
         return self._model
 
     @staticmethod
-    def _mlx(model, text: str, path: Path, instruct: str | None):
-        kwargs = {"text": text, "ref_audio": str(path)}
+    def _mlx(model, text: str, path: Path, instruct: str | None, transcript: str | None):
+        # max_tokens is the patch cap. min_tokens stays at the upstream default
+        # of 2 so the stop head can end the clip; the loop breaks when that
+        # head predicts stop after min_tokens real patches.
+        budget = f"({instruct}){text}" if instruct else text
+        kwargs = {
+            "text": text,
+            "ref_audio": str(path),
+            "max_tokens": vox_max_tokens(budget),
+            "min_tokens": 2,
+        }
         if instruct:
             kwargs["instruct"] = instruct
+        cleaned = (transcript or "").strip()
+        if cleaned:
+            kwargs["ref_text"] = cleaned
         return samples_from_mlx(model.generate(**kwargs))
 
     @staticmethod
@@ -176,6 +190,8 @@ class VoxCPM2Backend:
             reference_wav_path=str(path),
             cfg_value=2.0,
             inference_timesteps=10,
+            min_len=2,
+            max_len=vox_max_tokens(spoken),
         )
         samples = as_floats(wav)
         if not samples:

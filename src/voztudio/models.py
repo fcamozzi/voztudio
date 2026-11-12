@@ -27,6 +27,12 @@ MODEL_REPOS = {
     ("fish", "fish-http"): "fishaudio/s2-pro",
 }
 
+# Lightweight ASR for the trimmed reference window. Whisper tiny is the
+# default because a 15–30 s clip does not need the 0.6B Qwen3-ASR weights.
+# Set VOZTUDIO_ASR_MODEL=mlx-community/Qwen3-ASR-0.6B-8bit to use that instead.
+MLX_ASR_MODEL = "mlx-community/whisper-tiny-asr-fp16"
+FASTER_WHISPER_MODEL = "tiny"
+
 CHECKPOINT_DIRS = {
     "qwen3": "qwen3",
     "qwen3-fast": "qwen3-fast",
