@@ -31,7 +31,7 @@ outputs outside Git. Override `FISH_SPEECH_REF`, `FISH_SPEECH_ROOT`,
 scripts/start.sh
 ```
 
-The wrapper is at `http://127.0.0.1:7860`, its UI at
+The S2-Pro CPU load can take several minutes on first start (`FISH_START_TIMEOUT` defaults to 900 seconds). The wrapper is at `http://127.0.0.1:7860`, its UI at
 `http://127.0.0.1:7860/ui`, and the Fish Speech server remains internal at
 `http://127.0.0.1:8080`. Configuration can be provided through `.env` or the
 environment variables in `.env.example`.

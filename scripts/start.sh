@@ -9,6 +9,7 @@ FISH_HOST="${FISH_HOST:-127.0.0.1}"
 FISH_PORT="${FISH_PORT:-8080}"
 VOZTUDIO_HOST="${VOZTUDIO_HOST:-127.0.0.1}"
 VOZTUDIO_PORT="${VOZTUDIO_PORT:-7860}"
+FISH_START_TIMEOUT="${FISH_START_TIMEOUT:-900}"
 
 [[ -x "$VENV_DIR/bin/python" ]] || { echo "Run scripts/install.sh first" >&2; exit 1; }
 [[ -f "$CHECKPOINT_ROOT/config.json" ]] || {
@@ -29,7 +30,7 @@ FISH_PID=$!
 cleanup() { kill "$FISH_PID" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-for _ in $(seq 1 120); do
+for _ in $(seq 1 "$FISH_START_TIMEOUT"); do
   if curl -fsS "$FISH_SPEECH_URL/v1/health" >/dev/null 2>&1; then
     "$VENV_DIR/bin/python" -m voztudio.app
     exit $?
