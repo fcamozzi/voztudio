@@ -10,6 +10,7 @@ FISH_PORT="${FISH_PORT:-8080}"
 VOZTUDIO_HOST="${VOZTUDIO_HOST:-127.0.0.1}"
 VOZTUDIO_PORT="${VOZTUDIO_PORT:-7860}"
 FISH_START_TIMEOUT="${FISH_START_TIMEOUT:-900}"
+FISH_SKIP_WARMUP="${FISH_SKIP_WARMUP:-1}"
 
 [[ -x "$VENV_DIR/bin/python" ]] || { echo "Run scripts/install.sh first" >&2; exit 1; }
 [[ -f "$CHECKPOINT_ROOT/config.json" ]] || {
@@ -19,7 +20,25 @@ FISH_START_TIMEOUT="${FISH_START_TIMEOUT:-900}"
 }
 
 export FISH_SPEECH_URL="${FISH_SPEECH_URL:-http://$FISH_HOST:$FISH_PORT}"
-export VOZTUDIO_HOST VOZTUDIO_PORT
+export VOZTUDIO_HOST VOZTUDIO_PORT FISH_SKIP_WARMUP
+
+if [[ "$FISH_SKIP_WARMUP" == "1" ]]; then
+  "$VENV_DIR/bin/python" - "$FISH_SPEECH_ROOT/tools/server/model_manager.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+if "import os\n" not in source:
+    source = source.replace("import torch\n", "import os\nimport torch\n", 1)
+source = source.replace(
+    'if self.mode == "tts":\n            self.warm_up(self.tts_inference_engine)',
+    'if self.mode == "tts" and os.getenv("FISH_SKIP_WARMUP", "1") != "1":\n            self.warm_up(self.tts_inference_engine)',
+    1,
+)
+path.write_text(source, encoding="utf-8")
+PY
+fi
 
 "$VENV_DIR/bin/python" "$FISH_SPEECH_ROOT/tools/api_server.py" \
   --listen "$FISH_HOST:$FISH_PORT" \
