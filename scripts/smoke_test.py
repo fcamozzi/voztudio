@@ -23,13 +23,14 @@ def main() -> int:
     parser.add_argument("--url", default="http://127.0.0.1:7860")
     parser.add_argument("--transcript", required=True)
     args = parser.parse_args()
-    with httpx.Client(base_url=args.url, timeout=None) as client:
+    timeout = httpx.Timeout(900.0, connect=10.0)
+    with httpx.Client(base_url=args.url, timeout=timeout) as client:
         health = client.get("/health")
         health.raise_for_status()
         voice = client.post(
             "/voices",
             files={"audio": (args.voice.name, args.voice.read_bytes(), "audio/wav")},
-            data={"transcript": args.transcript},
+            data={"transcript": args.transcript, "consent": "true"},
         )
         voice.raise_for_status()
         voice_id = voice.json()["id"]

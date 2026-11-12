@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 import wave
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
-from voztudio.domain import GenerationRequest, VoiceRecord
+from voztudio.domain import GenerationRequest
 from voztudio.engine import AudioBuffer, SpeechEngine
 from voztudio.storage import VoiceStore
 from voztudio.text import chunk_text, validate_language
@@ -35,18 +36,31 @@ class GeneratedAudio:
 
 
 class GenerationService:
-    def __init__(self, engine: SpeechEngine, store: VoiceStore, output_root: Path, max_chars: int = 500):
+    def __init__(
+        self,
+        engine: SpeechEngine,
+        store: VoiceStore,
+        output_root: Path,
+        max_chars: int = 200,
+        fade_s: float = 0.02,
+    ):
         self.engine = engine
         self.store = store
         self.output_root = Path(output_root).expanduser().resolve()
         self.output_root.mkdir(parents=True, exist_ok=True)
         self.max_chars = max_chars
+        self.fade_s = fade_s
 
     def generate(self, request: GenerationRequest) -> GeneratedAudio:
         language = validate_language(request.language)
         if request.output_format != "wav":
             raise ValueError("Only WAV output is supported")
         reference = self.store.get(request.voice_id)
+        if not reference.transcript:
+            raise ValueError(
+                "Fish Speech requires a transcript for the reference audio; "
+                "register the voice with its exact transcript"
+            )
         buffers = [
             self.engine.generate(chunk, language, reference, request.instructions)
             for chunk in chunk_text(request.text, self.max_chars)
@@ -56,7 +70,7 @@ class GenerationService:
         sample_rate = buffers[0].sample_rate
         if any(buffer.sample_rate != sample_rate for buffer in buffers):
             raise RuntimeError("Fish Speech returned inconsistent sample rates")
-        samples = tuple(sample for buffer in buffers for sample in buffer.samples)
+        samples = crossfade_audio([buffer.samples for buffer in buffers], sample_rate, self.fade_s)
         audio_id = uuid.uuid4().hex
         audio_path = self.output_root / f"{audio_id}.wav"
         self._write_wav(audio_path, samples, sample_rate)
@@ -82,7 +96,7 @@ class GenerationService:
         return result
 
     @staticmethod
-    def _write_wav(path: Path, samples: tuple[float, ...], sample_rate: int) -> None:
+    def _write_wav(path: Path, samples: Sequence[float], sample_rate: int) -> None:
         pcm = bytearray()
         for sample in samples:
             bounded = max(-1.0, min(1.0, float(sample)))
@@ -92,3 +106,28 @@ class GenerationService:
             handle.setsampwidth(2)
             handle.setframerate(sample_rate)
             handle.writeframes(bytes(pcm))
+
+
+def crossfade_audio(
+    chunks: Sequence[Sequence[float]],
+    sample_rate: int,
+    fade_s: float = 0.02,
+) -> tuple[float, ...]:
+    """Equal-power join. Buffers shorter than the fade are concatenated."""
+    if not chunks:
+        return ()
+    merged = tuple(float(sample) for sample in chunks[0])
+    fade = int(round(fade_s * sample_rate))
+    for raw in chunks[1:]:
+        nxt = tuple(float(sample) for sample in raw)
+        if fade <= 1 or len(merged) < fade or len(nxt) < fade:
+            merged = merged + nxt
+            continue
+        last = fade - 1
+        overlap = tuple(
+            merged[-fade + index] * math.cos((math.pi / 2) * (index / last))
+            + nxt[index] * math.sin((math.pi / 2) * (index / last))
+            for index in range(fade)
+        )
+        merged = merged[:-fade] + overlap + nxt[fade:]
+    return merged
